@@ -116,6 +116,8 @@ export const GestureHandler: React.FC<GestureHandlerProps> = ({ onHandUpdate, ac
              let avgX = 0.5;
              let avgY = 0.5;
              let handCount = 0;
+             let f1 = 0;
+             let f2 = 0;
 
              if (latestHands.current?.multiHandLandmarks?.length > 0) {
                  const results = latestHands.current;
@@ -140,17 +142,20 @@ export const GestureHandler: React.FC<GestureHandlerProps> = ({ onHandUpdate, ac
                  avgY = totalY / handCount;
 
                  if (handCount === 2) {
-                     const f1 = fingerCounts[0];
-                     const f2 = fingerCounts[1];
-                     if (f1 >= 4 && f2 >= 4) currentGesture = 'dual_open';
-                     else if (f1 === 0 && f2 === 0) currentGesture = 'dual_fist';
+                     f1 = fingerCounts[0];
+                     f2 = fingerCounts[1];
+                     
+                     // Strict check first for specific numbers
+                     if (f1 === 0 && f2 === 0) currentGesture = 'dual_fist';
                      else if (f1 === 1 && f2 === 1) currentGesture = 'dual_1';
                      else if (f1 === 2 && f2 === 2) currentGesture = 'dual_2';
                      else if (f1 === 3 && f2 === 3) currentGesture = 'dual_3';
-                     else if (f1 === 4 && f2 === 4) currentGesture = 'dual_4';
+                     else if (f1 === 4 && f2 === 4) currentGesture = 'dual_4'; // Explicit 4 fingers - Winter
+                     else if (f1 >= 4 && f2 >= 4) currentGesture = 'dual_open'; // 5+5, 4+5, 5+4 (Relaxed open for movement)
                      else currentGesture = 'single';
                  } else {
                      currentGesture = 'single';
+                     f1 = fingerCounts[0] || 0;
                  }
              }
 
@@ -165,8 +170,6 @@ export const GestureHandler: React.FC<GestureHandlerProps> = ({ onHandUpdate, ac
                  ctx.save();
                  ctx.scale(-1, 1);
                  ctx.translate(-canvasRef.current.width, 0);
-                 // Only draw minimal mesh to save perf/visuals
-                 // if (window.drawConnectors) window.drawConnectors(ctx, landmarks, window.FACEMESH_TESSELATION, { color: '#C0C0C070', lineWidth: 0.5 });
                  
                  // Draw nose tip for reference
                  const nose = landmarks[4]; // Tip of nose
@@ -183,25 +186,17 @@ export const GestureHandler: React.FC<GestureHandlerProps> = ({ onHandUpdate, ac
                  ctx.restore();
 
                  // --- Head Rotation Math (Approximate from 2D Landmarks) ---
-                 
-                 // Yaw (Left/Right): Compare Nose X to the center of the face width
-                 // Note: landmarks are mirrored in the loop, but raw data is normalized 0-1.
-                 // In raw MediaPipe data: x=0 is Left (viewer's left), x=1 is Right.
-                 // If nose.x < mid.x, looking Left (viewer perspective). 
                  const midX = (leftFace.x + rightFace.x) / 2;
-                 const rawYaw = (nose.x - midX) * 10; // Multiplier for sensitivity
-                 // Invert because we mirror the canvas usually, but let's check standard logic.
-                 // If I look Left, my nose moves Left (x decreases). 
-                 headYaw = -rawYaw; // Invert to match standard camera controls
+                 const rawYaw = (nose.x - midX) * 10; 
+                 headYaw = -rawYaw; 
 
-                 // Pitch (Up/Down): Compare Nose Y to center of face height
                  const midY = (topHead.y + bottomHead.y) / 2;
                  const rawPitch = (nose.y - midY) * 10;
                  headPitch = -rawPitch;
              }
 
              // Status update
-             setStatus(`Hands: ${handCount} | Head Tracking Active`);
+             setStatus(`Hands: ${handCount} | Fingers: ${handCount === 2 ? `${f1},${f2}` : f1}`);
              setDebugInfo(`G:${currentGesture} | Y:${headYaw.toFixed(2)} P:${headPitch.toFixed(2)}`);
              ctx.restore();
 
@@ -221,8 +216,6 @@ export const GestureHandler: React.FC<GestureHandlerProps> = ({ onHandUpdate, ac
           const camera = new window.Camera(videoRef.current, {
             onFrame: async () => {
               if (handsRef.current && videoRef.current) {
-                  // We can't await both easily in the same tick without lag, 
-                  // but standard `send` is optimized.
                   await handsRef.current.send({ image: videoRef.current });
               }
               if (faceMeshRef.current && videoRef.current) {
@@ -258,12 +251,13 @@ export const GestureHandler: React.FC<GestureHandlerProps> = ({ onHandUpdate, ac
     const isFingerExtended = (tipIdx: number, pipIdx: number) => {
         const dTip = Math.hypot(landmarks[tipIdx].x - wrist.x, landmarks[tipIdx].y - wrist.y);
         const dPip = Math.hypot(landmarks[pipIdx].x - wrist.x, landmarks[pipIdx].y - wrist.y);
-        return dTip > dPip;
+        return dTip > dPip; // Simple distance check relative to wrist
     };
     const thumbTip = landmarks[4];
     const indexMCP = landmarks[5];
     const thumbDist = Math.hypot(thumbTip.x - indexMCP.x, thumbTip.y - indexMCP.y);
-    const isThumbOpen = thumbDist > 0.08; 
+    // Increased threshold slightly to make tucking thumb (for count 4) easier to register as "closed"
+    const isThumbOpen = thumbDist > 0.09; 
 
     if (isThumbOpen) count++;
     if (isFingerExtended(8, 6)) count++;

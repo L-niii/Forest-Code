@@ -12,7 +12,7 @@ interface ForestSceneProps {
     audioManager: React.MutableRefObject<AudioManager | null>;
 }
 
-// --- Procedural Textures (Unchanged) ---
+// --- Procedural Textures ---
 const useProceduralTextures = () => {
   return useMemo(() => {
     const createTexture = (type: 'bark' | 'leaf' | 'ground' | 'wood' | 'snow') => {
@@ -32,6 +32,12 @@ const useProceduralTextures = () => {
       } else if (type === 'leaf') {
         ctx.fillStyle = '#ffffff';
         ctx.fillRect(0,0,512,512);
+        // Simple vein structure for particle usage
+        ctx.strokeStyle = '#eeeeee';
+        ctx.beginPath();
+        ctx.moveTo(256, 50);
+        ctx.lineTo(256, 460);
+        ctx.stroke();
       } else if (type === 'ground') {
         ctx.fillStyle = '#808080';
         ctx.fillRect(0, 0, 512, 512);
@@ -69,7 +75,7 @@ const useProceduralTextures = () => {
   }, []);
 };
 
-// --- Hybrid Camera Control (Unchanged) ---
+// --- Hybrid Camera Control ---
 const HybridController = ({ handData }: { handData: HandData }) => {
     const { camera } = useThree();
     const keys = useRef<{ [key: string]: boolean }>({});
@@ -155,7 +161,169 @@ const HybridController = ({ handData }: { handData: HandData }) => {
     return null;
 }
 
-// --- Seasonal Particle Effects with Audio Sync ---
+// --- Hand Interaction Particles ---
+
+const HandMagicParticles = ({ season, handData }: { season: 'spring' | 'summer' | 'autumn' | 'winter', handData: HandData }) => {
+    const meshRef = useRef<THREE.InstancedMesh>(null);
+    const count = 200; // Number of particles in the pool
+    const { camera } = useThree();
+    
+    // Particle State
+    const particles = useMemo(() => {
+        return new Array(count).fill(0).map(() => ({
+            position: new THREE.Vector3(0, -1000, 0),
+            velocity: new THREE.Vector3(),
+            life: 0,
+            scale: 1,
+            rotation: new THREE.Vector3(),
+            rotationSpeed: new THREE.Vector3(),
+            color: new THREE.Color()
+        }));
+    }, []);
+
+    const dummy = useMemo(() => new THREE.Object3D(), []);
+    const lastHandPos = useRef(new THREE.Vector3());
+    const particleIndex = useRef(0);
+
+    // Season Config
+    const config = useMemo(() => {
+        switch(season) {
+            case 'spring': return { 
+                color1: '#ffb7b2', color2: '#ffdac1', // Pink/Peach
+                gravity: 0.5, drag: 0.98, spread: 0.2, life: 1.5, scale: 0.3,
+                shape: 'petal'
+            };
+            case 'summer': return { 
+                color1: '#4caf50', color2: '#8bc34a', // Greens
+                gravity: -0.5, drag: 0.95, spread: 0.4, life: 1.0, scale: 0.4,
+                shape: 'leaf'
+            };
+            case 'autumn': return { 
+                color1: '#ff5722', color2: '#ff9800', // Orange/Red
+                gravity: -1.0, drag: 0.96, spread: 0.5, life: 2.0, scale: 0.4,
+                shape: 'leaf'
+            };
+            case 'winter': return { 
+                color1: '#e0f7fa', color2: '#ffffff', // White/Cyan
+                gravity: -0.2, drag: 0.99, spread: 0.3, life: 2.5, scale: 0.2,
+                shape: 'snow'
+            };
+        }
+    }, [season]);
+
+    useFrame((state, delta) => {
+        if (!meshRef.current) return;
+
+        // 1. Calculate Hand Position in 3D
+        // Map 2D 0-1 coords to a plane in front of camera
+        const vector = new THREE.Vector3(
+            (handData.x * 2) - 1, // Normalized X (-1 to 1)
+            -(handData.y * 2) + 1, // Normalized Y
+            0.5 
+        );
+        vector.unproject(camera);
+        const dir = vector.sub(camera.position).normalize();
+        const distance = 8; // Distance from camera to spawn particles
+        const targetPos = camera.position.clone().add(dir.multiplyScalar(distance));
+
+        // Calculate hand velocity for "throwing" particles
+        const handVel = targetPos.clone().sub(lastHandPos.current).divideScalar(delta);
+        // Clamp huge jumps (like when hand first appears)
+        if (handVel.length() > 50) handVel.set(0,0,0); 
+
+        lastHandPos.current.copy(targetPos);
+
+        // 2. Spawn New Particles if hand is present
+        if (handData.handCount > 0) {
+            const spawnRate = 2; // Particles per frame
+            for(let i=0; i<spawnRate; i++) {
+                particleIndex.current = (particleIndex.current + 1) % count;
+                const p = particles[particleIndex.current];
+                
+                p.life = config.life;
+                p.position.copy(targetPos).add(new THREE.Vector3(
+                    (Math.random() - 0.5) * config.spread,
+                    (Math.random() - 0.5) * config.spread,
+                    (Math.random() - 0.5) * config.spread
+                ));
+                
+                // Add some randomness + hand inertia
+                p.velocity.copy(handVel).multiplyScalar(0.3).add(new THREE.Vector3(
+                    (Math.random() - 0.5) * 2,
+                    (Math.random() - 0.5) * 2,
+                    (Math.random() - 0.5) * 2
+                ));
+                
+                p.rotation.set(Math.random()*Math.PI, Math.random()*Math.PI, Math.random()*Math.PI);
+                p.rotationSpeed.set((Math.random()-0.5)*5, (Math.random()-0.5)*5, (Math.random()-0.5)*5);
+                p.scale = config.scale * (0.5 + Math.random() * 0.5);
+                
+                // Mix colors
+                const c1 = new THREE.Color(config.color1);
+                const c2 = new THREE.Color(config.color2);
+                p.color = c1.lerp(c2, Math.random());
+            }
+        }
+
+        // 3. Update & Render All Particles
+        particles.forEach((p, i) => {
+            if (p.life > 0) {
+                p.life -= delta;
+                
+                // Physics
+                p.velocity.y += config.gravity * delta * -5; // Gravity is reversed in config usually? let's make it intuitive.
+                // Actually in 3D y-up, negative gravity falls down.
+                // config.gravity 0.5 (Spring) -> floats up? Let's fix physics below.
+                
+                if (season === 'spring') p.velocity.y += 2 * delta; // Float up
+                else if (season === 'summer') p.velocity.add(new THREE.Vector3((Math.random()-0.5), (Math.random()-0.5), (Math.random()-0.5)).multiplyScalar(10 * delta)); // Buzzing
+                else if (season === 'autumn') p.velocity.x += Math.sin(state.clock.elapsedTime * 5) * 5 * delta; // Wind turbulence
+                else if (season === 'winter') p.velocity.y -= 1 * delta; // Slow fall
+                
+                p.velocity.multiplyScalar(config.drag);
+                p.position.add(p.velocity.clone().multiplyScalar(delta));
+                
+                p.rotation.x += p.rotationSpeed.x * delta;
+                p.rotation.y += p.rotationSpeed.y * delta;
+                p.rotation.z += p.rotationSpeed.z * delta;
+
+                // Scale down as life fades
+                const currentScale = p.scale * (p.life / config.life);
+
+                dummy.position.copy(p.position);
+                dummy.rotation.set(p.rotation.x, p.rotation.y, p.rotation.z);
+                dummy.scale.set(currentScale, currentScale, currentScale);
+                dummy.updateMatrix();
+                
+                meshRef.current?.setMatrixAt(i, dummy.matrix);
+                meshRef.current?.setColorAt(i, p.color);
+            } else {
+                // Hide dead particles
+                dummy.position.set(0, -1000, 0); // Move out of view
+                dummy.scale.set(0,0,0);
+                dummy.updateMatrix();
+                meshRef.current?.setMatrixAt(i, dummy.matrix);
+            }
+        });
+
+        meshRef.current.instanceMatrix.needsUpdate = true;
+        if (meshRef.current.instanceColor) meshRef.current.instanceColor.needsUpdate = true;
+    });
+
+    return (
+        <instancedMesh ref={meshRef} args={[undefined, undefined, count]} frustumCulled={false}>
+            {/* Simple Plane Geometry for performance, or use Dodecahedron for petals */}
+            {season === 'spring' ? <dodecahedronGeometry args={[0.5, 0]} /> :
+             season === 'winter' ? <octahedronGeometry args={[0.5, 0]} /> :
+             <planeGeometry args={[1, 1]} /> 
+            }
+            <meshBasicMaterial transparent opacity={0.8} side={THREE.DoubleSide} />
+        </instancedMesh>
+    );
+};
+
+
+// --- Seasonal Particle Effects with Audio Sync (Existing) ---
 
 const SpringFlowers = ({ audioManager }: { audioManager: React.MutableRefObject<AudioManager | null> }) => {
     const meshRef = useRef<THREE.InstancedMesh>(null);
@@ -187,7 +355,6 @@ const SpringFlowers = ({ audioManager }: { audioManager: React.MutableRefObject<
         if (!meshRef.current) return;
         
         // Sync Visuals: Pulse growth
-        // Rhythm: 0.5Hz pulse
         const time = state.clock.elapsedTime;
         const pulse = Math.sin(time * 3) * 0.2 + 1.0; 
         
@@ -427,6 +594,9 @@ export const ForestScene: React.FC<ForestSceneProps> = ({ season, handData, audi
 
       {/* Controllers */}
       <HybridController handData={handData} />
+
+      {/* Hand Interaction Particles (New) */}
+      <HandMagicParticles season={season} handData={handData} />
 
       {/* Seasonal Effects (Now with Audio Links) */}
       {season === 'spring' && <SpringFlowers audioManager={audioManager} />}
