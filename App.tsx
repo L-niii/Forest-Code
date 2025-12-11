@@ -3,13 +3,13 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { ForestScene } from './components/ForestScene';
 import { GestureHandler, HandData } from './components/GestureHandler';
 import { AudioManager } from './components/AudioManager';
-import { Hand, Volume2, Flower2, Sun, CloudRain, Snowflake, Move, Keyboard, MousePointer, Loader2 } from 'lucide-react';
+import { Hand, Volume2, Flower2, Sun, CloudRain, Snowflake, Move, Keyboard, MousePointer, Loader2, Eye } from 'lucide-react';
 
 export type Season = 'spring' | 'summer' | 'autumn' | 'winter';
 
 export default function App() {
   const [season, setSeason] = useState<Season>('summer');
-  const [handData, setHandData] = useState<HandData>({ gesture: 'none', x: 0.5, y: 0.5, handCount: 0 });
+  const [handData, setHandData] = useState<HandData>({ gesture: 'none', x: 0.5, y: 0.5, handCount: 0, headYaw: 0, headPitch: 0 });
   const [isStarted, setIsStarted] = useState(false);
   const [pendingSeason, setPendingSeason] = useState<Season | null>(null);
   const [progress, setProgress] = useState(0);
@@ -100,7 +100,6 @@ export default function App() {
                     <ul className="text-left space-y-1 opacity-80">
                         <li>Both Open/Fist: <b>Fwd/Back</b></li>
                         <li>Move Hands: <b>Strafe & Fly</b></li>
-                        <li>Center Hands: <b>Stop</b></li>
                     </ul>
                 </div>
 
@@ -118,7 +117,17 @@ export default function App() {
                     </div>
                 </div>
 
-                {/* Keyboard Controls */}
+                {/* Head Controls */}
+                 <div className="bg-white/10 p-4 rounded-xl flex flex-col items-center gap-2 border border-white/5">
+                    <Eye size={24} className="text-purple-400 mb-1"/>
+                    <div className="font-bold text-white">Head Look</div>
+                    <ul className="text-left space-y-1 opacity-80">
+                        <li>Turn Head Left/Right: <b>Turn</b></li>
+                        <li>Tilt Head Up/Down: <b>Pitch</b></li>
+                    </ul>
+                </div>
+                
+                 {/* Keyboard Controls */}
                  <div className="bg-white/10 p-4 rounded-xl flex flex-col items-center gap-2 border border-white/5">
                     <Keyboard size={24} className="text-blue-400 mb-1"/>
                     <div className="font-bold text-white">Keyboard</div>
@@ -128,14 +137,6 @@ export default function App() {
                     </ul>
                 </div>
 
-                 {/* Mouse Controls */}
-                 <div className="bg-white/10 p-4 rounded-xl flex flex-col items-center gap-2 border border-white/5">
-                    <MousePointer size={24} className="text-purple-400 mb-1"/>
-                    <div className="font-bold text-white">Mouse</div>
-                    <div className="text-center opacity-80 leading-tight">
-                        Click screen to enable Mouse Look
-                    </div>
-                </div>
             </div>
             
             <button 
@@ -190,21 +191,33 @@ export default function App() {
                          <span className="text-xs font-bold text-gray-400">INPUT</span>
                          <span className="text-[10px] font-mono bg-white/20 px-1 rounded">{handData.gesture.replace('dual_', '2x ').toUpperCase()}</span>
                     </div>
-                     {/* Position visualizer */}
-                    <div className="w-full h-24 bg-black/50 border border-white/10 rounded-lg relative overflow-hidden">
+                     {/* Hand Position visualizer */}
+                    <div className="w-full h-16 bg-black/50 border border-white/10 rounded-lg relative overflow-hidden mb-2">
+                         <div className="absolute top-1 left-1 text-[9px] text-gray-500">HANDS</div>
                         <div className="absolute top-1/2 left-1/2 w-[1px] h-full bg-white/20 -translate-x-1/2 -translate-y-1/2"/>
                         <div className="absolute top-1/2 left-1/2 w-full h-[1px] bg-white/20 -translate-x-1/2 -translate-y-1/2"/>
                         <div 
-                            className={`absolute w-3 h-3 rounded-full -translate-x-1/2 -translate-y-1/2 transition-all duration-100 ${handData.handCount > 0 ? 'bg-green-500 shadow-[0_0_10px_#4ade80]' : 'bg-red-500 opacity-20'}`}
+                            className={`absolute w-2 h-2 rounded-full -translate-x-1/2 -translate-y-1/2 transition-all duration-100 ${handData.handCount > 0 ? 'bg-green-500' : 'bg-red-500 opacity-20'}`}
                             style={{ 
                                 left: `${(1 - handData.x) * 100}%`, 
                                 top: `${handData.y * 100}%` 
                             }}
                         />
-                        {/* Deadzone visualizer */}
-                        <div className="absolute top-1/2 left-1/2 w-[25%] h-[25%] border border-white/10 rounded -translate-x-1/2 -translate-y-1/2 pointer-events-none" />
                     </div>
-                    <div className="text-[9px] text-gray-500 mt-1 text-center">Center hands to stop sliding</div>
+                    {/* Head Position visualizer */}
+                     <div className="w-full h-16 bg-black/50 border border-white/10 rounded-lg relative overflow-hidden">
+                        <div className="absolute top-1 left-1 text-[9px] text-gray-500">HEAD</div>
+                        <div className="absolute top-1/2 left-1/2 w-[1px] h-full bg-white/20 -translate-x-1/2 -translate-y-1/2"/>
+                        <div className="absolute top-1/2 left-1/2 w-full h-[1px] bg-white/20 -translate-x-1/2 -translate-y-1/2"/>
+                        {/* Visualize yaw/pitch as a dot */}
+                        <div 
+                            className="absolute w-2 h-2 rounded-full bg-yellow-400 -translate-x-1/2 -translate-y-1/2 shadow-[0_0_8px_yellow]"
+                            style={{ 
+                                left: `${50 + (handData.headYaw * 50)}%`, // Scale logic to visual
+                                top: `${50 + (handData.headPitch * 50)}%` 
+                            }}
+                        />
+                    </div>
                 </div>
             </div>
 

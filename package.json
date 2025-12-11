@@ -16,6 +16,7 @@
     "@react-three/drei": "^10.7.7",
     "three": "^0.182.0",
     "@mediapipe/hands": "latest",
+    "@mediapipe/face_mesh": "latest",
     "@mediapipe/camera_utils": "latest",
     "@mediapipe/drawing_utils": "latest"
   },

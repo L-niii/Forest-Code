@@ -1,7 +1,7 @@
 
 import React, { useMemo, useRef, useEffect, useState } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { Sky, BakeShadows, PointerLockControls } from '@react-three/drei';
+import { Sky, BakeShadows } from '@react-three/drei';
 import * as THREE from 'three';
 import { HandData } from './GestureHandler';
 
@@ -10,7 +10,7 @@ interface ForestSceneProps {
     handData: HandData;
 }
 
-// --- Procedural Textures ---
+// --- Procedural Textures (Unchanged) ---
 const useProceduralTextures = () => {
   return useMemo(() => {
     const createTexture = (type: 'bark' | 'leaf' | 'ground' | 'wood' | 'snow') => {
@@ -67,11 +67,15 @@ const useProceduralTextures = () => {
   }, []);
 };
 
-// --- Hybrid Camera Control ---
+// --- Hybrid Camera Control (Head + Hand) ---
 const HybridController = ({ handData }: { handData: HandData }) => {
     const { camera } = useThree();
     const keys = useRef<{ [key: string]: boolean }>({});
     const velocity = useRef(new THREE.Vector3());
+    
+    // Euler angles for rotation smoothing
+    const currentYaw = useRef(0);
+    const currentPitch = useRef(0);
 
     // Listen for keyboard
     useEffect(() => {
@@ -86,16 +90,45 @@ const HybridController = ({ handData }: { handData: HandData }) => {
     }, []);
 
     useFrame((state, delta) => {
-        // --- 1. Rotation Logic ---
-        // Mouse controls rotation via PointerLockControls. 
-        // We REMOVED hand rotation to allow hand translation.
+        // --- 1. Rotation Logic (Head Tracking) ---
+        // Joystick style: Looking left turns the camera left. 
+        // deadzone prevents drift when looking straight.
+        const rotDeadzone = 0.15;
+        let rotSpeedY = 0; // Yaw speed
+        let rotSpeedX = 0; // Pitch speed
+
+        if (Math.abs(handData.headYaw) > rotDeadzone) {
+            // Non-linear sensitivity
+            const input = handData.headYaw;
+            // Negative input (looking left) should rotate camera positive Y (left)
+            rotSpeedY = Math.sign(input) * Math.pow(Math.abs(input), 1.5) * 2.0;
+        }
+
+        if (Math.abs(handData.headPitch) > rotDeadzone) {
+            const input = handData.headPitch;
+            // Input positive (looking up) -> Camera Pitch up (positive)
+            rotSpeedX = Math.sign(input) * Math.pow(Math.abs(input), 1.5) * 1.5;
+        }
+
+        // Apply rotation velocity
+        currentYaw.current -= rotSpeedY * delta;
+        currentPitch.current += rotSpeedX * delta;
         
-        // --- 2. Movement Logic ---
+        // Clamp pitch (Don't break neck)
+        currentPitch.current = Math.max(-1.4, Math.min(1.4, currentPitch.current));
+
+        // Apply to camera
+        camera.rotation.order = 'YXZ'; // Important to rotate Y (Yaw) then X (Pitch)
+        camera.rotation.y = currentYaw.current;
+        camera.rotation.x = currentPitch.current;
+
+
+        // --- 2. Movement Logic (Hands + Keys) ---
         let forwardSpeed = 0;
         let strafeSpeed = 0;
         let verticalSpeed = 0;
         
-        const deadzone = 0.25;
+        const moveDeadzone = 0.25;
 
         // Hand Inputs
         if (handData.handCount > 0) {
@@ -104,37 +137,27 @@ const HybridController = ({ handData }: { handData: HandData }) => {
             else if (handData.gesture === 'dual_fist') forwardSpeed -= 5; 
 
             // Strafe Left / Right (Hand X Position)
-            // Hand Right (x > 0.5) -> Move Right
-            if (Math.abs(handData.x - 0.5) > deadzone) {
+            if (Math.abs(handData.x - 0.5) > moveDeadzone) {
                 const input = handData.x - 0.5;
                 const sign = Math.sign(input);
-                strafeSpeed += sign * Math.pow(Math.abs(input), 1.5) * 15; // Speed multiplier
+                strafeSpeed += sign * Math.pow(Math.abs(input), 1.5) * 15; 
             }
 
             // Elevation Up / Down (Hand Y Position)
-            // Hand Up (y < 0.5) -> Move Up. Hand Down (y > 0.5) -> Move Down
-            if (Math.abs(handData.y - 0.5) > deadzone) {
+            if (Math.abs(handData.y - 0.5) > moveDeadzone) {
                 const input = handData.y - 0.5;
-                // input is positive when hand is down. We want down to be negative Y? 
-                // Actually usually in games: E/Q or Space/Shift.
-                // Let's map Hand Up -> Camera Up (Y+), Hand Down -> Camera Down (Y-)
-                // input > 0 (Down) -> verticalSpeed -
                 const sign = Math.sign(input);
                 verticalSpeed -= sign * Math.pow(Math.abs(input), 1.5) * 8;
             }
         }
 
-        // Keyboard Inputs (Additive)
+        // Keyboard Inputs
         if (keys.current['KeyW'] || keys.current['ArrowUp']) forwardSpeed += 12;
         if (keys.current['KeyS'] || keys.current['ArrowDown']) forwardSpeed -= 12;
-        
         if (keys.current['KeyA'] || keys.current['ArrowLeft']) strafeSpeed -= 12;
         if (keys.current['KeyD'] || keys.current['ArrowRight']) strafeSpeed += 12;
         
-        if (keys.current['Space']) verticalSpeed += 8;
-        if (keys.current['ShiftLeft']) verticalSpeed -= 8;
-
-        // Apply
+        // Apply velocity relative to camera look direction
         const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
         forward.y = 0;
         forward.normalize();
@@ -143,7 +166,7 @@ const HybridController = ({ handData }: { handData: HandData }) => {
         right.y = 0;
         right.normalize();
 
-        const up = new THREE.Vector3(0, 1, 0); // World Up
+        const up = new THREE.Vector3(0, 1, 0); 
 
         const targetVelocity = new THREE.Vector3()
             .addScaledVector(forward, forwardSpeed)
@@ -157,36 +180,20 @@ const HybridController = ({ handData }: { handData: HandData }) => {
             camera.position.addScaledVector(velocity.current, delta);
         }
         
-        // Prevent going underground
         if (camera.position.y < 2) camera.position.y = 2;
-        
-        // Height bob (only if moving horizontally)
-        const horizontalSpeed = Math.sqrt(velocity.current.x**2 + velocity.current.z**2);
-        if (horizontalSpeed > 0.5) {
-            // Apply bob on top of current Y
-            // But since we control Y now, bob might interfere. 
-            // Let's make bob very subtle or disable if actively flying.
-            if (Math.abs(verticalSpeed) < 0.1) {
-                 // Subtle bob
-                 camera.position.y += Math.sin(state.clock.elapsedTime * 10) * 0.02;
-            }
-        }
     });
 
-    return <PointerLockControls selector="#canvas-container" />;
+    return null; // No PointerLockControls anymore
 }
 
-// --- Scene Components ---
-
+// --- Scene Components (Unchanged) ---
 const WoodenBench = ({ position, rotation, texture }: any) => {
     return (
         <group position={position} rotation={rotation}>
-            {/* Seat */}
             <mesh position={[0, 1.5, 0]} castShadow receiveShadow>
                 <boxGeometry args={[6, 0.2, 1.5]} />
                 <meshStandardMaterial map={texture} color="#8d6e63" roughness={0.8} />
             </mesh>
-            {/* Legs */}
             <mesh position={[-2.5, 0.75, 0]} castShadow>
                 <boxGeometry args={[0.3, 1.5, 1.2]} />
                 <meshStandardMaterial map={texture} color="#6d4c41" />

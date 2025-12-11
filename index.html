@@ -17,13 +17,15 @@
     "@react-three/drei": "https://esm.sh/@react-three/drei@^10.7.7",
     "three": "https://esm.sh/three@^0.182.0",
     "@mediapipe/hands": "https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js",
+    "@mediapipe/face_mesh": "https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js",
     "@mediapipe/camera_utils": "https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js",
     "@mediapipe/drawing_utils": "https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"
   }
 }
 </script>
-<!-- Load MediaPipe Globals as fallback/main method since ESM imports can be flaky with these libs -->
+<!-- Load MediaPipe Globals -->
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
 </head>
