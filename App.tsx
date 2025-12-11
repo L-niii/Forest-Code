@@ -75,13 +75,6 @@ export default function App() {
   useEffect(() => {
     if (!audioManager.current || !isStarted) return;
     audioManager.current.setSeason(season);
-
-    if (season === 'summer' || season === 'spring') {
-        const interval = setInterval(() => {
-            if (Math.random() > (season === 'summer' ? 0.6 : 0.8)) audioManager.current?.playBirdSound();
-        }, 2000);
-        return () => clearInterval(interval);
-    }
   }, [season, isStarted]);
 
   return (
@@ -150,7 +143,7 @@ export default function App() {
 
       {/* Main 3D Viewport */}
       <div className="absolute inset-0 z-0 cursor-crosshair">
-        {isStarted && <ForestScene season={season} handData={handData} />}
+        {isStarted && <ForestScene season={season} handData={handData} audioManager={audioManager} />}
       </div>
 
       {/* Overlay UI */}
@@ -182,7 +175,7 @@ export default function App() {
                         {season === 'winter' && <Snowflake size={18} className="text-cyan-400 animate-bounce"/>}
                     </h1>
                     <div className="text-[10px] text-gray-400 font-mono mt-1">
-                        AUDIO: {season === 'summer' ? 'INSECTS' : season === 'winter' ? 'HOWLING WIND' : season === 'autumn' ? 'WIND & LEAVES' : 'BREEZE & BIRDS'}
+                        AUDIO: {season === 'summer' ? 'UPBEAT BIRDS' : season === 'winter' ? 'CRYSTAL BELLS' : season === 'autumn' ? 'CALM MELODY' : 'HAPPY FLUTE'}
                     </div>
                 </div>
 

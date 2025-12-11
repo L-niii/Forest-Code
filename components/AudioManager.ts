@@ -1,31 +1,30 @@
 
 export class AudioManager {
   private ctx: AudioContext | null = null;
-  
-  // Nodes for various effects
   private masterGain: GainNode | null = null;
   
-  // Wind (Base for all seasons)
-  private windOsc: AudioBufferSourceNode | null = null;
-  private windGain: GainNode | null = null;
-  private windFilter: BiquadFilterNode | null = null;
+  // Melody System
+  private currentSeason: 'spring' | 'summer' | 'autumn' | 'winter' = 'summer';
+  private isPlaying = false;
+  private timerID: number | null = null;
 
-  // Summer Insects
-  private insectOsc: OscillatorNode | null = null;
-  private insectGain: GainNode | null = null;
-  private insectLFO: OscillatorNode | null = null;
+  // Scales (Hz) - Using Major Pentatonic scales for happy vibes
+  private scales = {
+    // Spring: C Major (Bright, innocent)
+    spring: [261.63, 293.66, 329.63, 392.00, 440.00, 523.25], 
+    // Summer: G Major (High energy)
+    summer: [392.00, 440.00, 493.88, 587.33, 659.25, 783.99], 
+    // Autumn: F Major (Warm, slightly lower but still major)
+    autumn: [174.61, 220.00, 261.63, 293.66, 349.23, 440.00], 
+    // Winter: D Major High (Sparkling/Icy but happy)
+    winter: [587.33, 659.25, 739.99, 880.00, 987.77, 1174.66] 
+  };
 
-  // Autumn Rustle
-  private rustleFilter: BiquadFilterNode | null = null;
-  private rustleGain: GainNode | null = null;
+  // Effects
+  private reverbNode: ConvolverNode | null = null;
+  private reverbGain: GainNode | null = null; 
 
-  // Winter Howl
-  private howlOsc: OscillatorNode | null = null;
-  private howlGain: GainNode | null = null;
-
-  constructor() {
-    // Initialized on user interaction
-  }
+  constructor() {}
 
   init() {
     if (this.ctx) return;
@@ -33,183 +32,196 @@ export class AudioManager {
     this.masterGain = this.ctx.createGain();
     this.masterGain.connect(this.ctx.destination);
     
-    this.setupWind();
-    this.setupInsects();
-    this.setupWinterHowl();
+    this.setupReverb();
+    
+    // Start the happy melody loop
+    this.startMelody();
   }
 
-  // --- Generators ---
-
-  private createWhiteNoise() {
-    if (!this.ctx) return null;
-    const bufferSize = 2 * this.ctx.sampleRate;
-    const noiseBuffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
-    const output = noiseBuffer.getChannelData(0);
-    for (let i = 0; i < bufferSize; i++) {
-      output[i] = Math.random() * 2 - 1;
-    }
-    return noiseBuffer;
+  // --- Melodic Sequencer ---
+  private startMelody() {
+      if (this.isPlaying) return;
+      this.isPlaying = true;
+      this.scheduleNote();
   }
 
-  private setupWind() {
+  private scheduleNote() {
+      if (!this.ctx || !this.masterGain) return;
+      
+      // Determine speed based on season
+      // Summer is fastest, Autumn is slowest (but still happy)
+      let minDel = 0.2;
+      let maxDel = 0.6;
+      
+      if (this.currentSeason === 'spring') { minDel = 0.3; maxDel = 0.8; }
+      else if (this.currentSeason === 'summer') { minDel = 0.15; maxDel = 0.4; } // Energetic!
+      else if (this.currentSeason === 'autumn') { minDel = 0.4; maxDel = 1.0; } // Relaxed
+      else if (this.currentSeason === 'winter') { minDel = 0.5; maxDel = 1.2; } // Sparse sparkles
+
+      const delay = minDel + Math.random() * (maxDel - minDel);
+      
+      this.playRandomNote();
+
+      this.timerID = window.setTimeout(() => this.scheduleNote(), delay * 1000);
+  }
+
+  private playRandomNote() {
+      if (!this.ctx || !this.masterGain) return;
+      
+      const scale = this.scales[this.currentSeason];
+      // Pick a random note from the scale
+      const freq = scale[Math.floor(Math.random() * scale.length)];
+      
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      
+      // Timbre selection
+      if (this.currentSeason === 'winter') {
+          osc.type = 'sine'; // Bell-like
+      } else if (this.currentSeason === 'summer') {
+          osc.type = 'triangle'; // Marimba-like
+      } else {
+          osc.type = 'sine'; // Flute-like
+      }
+
+      osc.frequency.value = freq;
+      
+      const t = this.ctx.currentTime;
+      const duration = 1.0;
+
+      // Happy Envelope: Fast attack, exponential decay (Pluck sound)
+      gain.gain.setValueAtTime(0, t);
+      gain.gain.linearRampToValueAtTime(0.1, t + 0.02); // Fast attack
+      gain.gain.exponentialRampToValueAtTime(0.001, t + duration); // Long tail
+
+      osc.connect(gain);
+      gain.connect(this.masterGain);
+      if (this.reverbNode) gain.connect(this.reverbNode); // Add reverb for space
+
+      osc.start(t);
+      osc.stop(t + duration);
+  }
+
+  // --- Effects & Environment ---
+  private setupReverb() {
     if (!this.ctx || !this.masterGain) return;
-    
-    const noiseBuffer = this.createWhiteNoise();
-    if (!noiseBuffer) return;
+    const duration = 3.0;
+    const decay = 3.0;
+    const rate = this.ctx.sampleRate;
+    const length = rate * duration;
+    const impulse = this.ctx.createBuffer(2, length, rate);
+    const left = impulse.getChannelData(0);
+    const right = impulse.getChannelData(1);
 
-    this.windOsc = this.ctx.createBufferSource();
-    this.windOsc.buffer = noiseBuffer;
-    this.windOsc.loop = true;
-
-    this.windFilter = this.ctx.createBiquadFilter();
-    this.windFilter.type = 'lowpass';
-    this.windFilter.frequency.value = 400;
-
-    this.windGain = this.ctx.createGain();
-    this.windGain.gain.value = 0.1; // Base volume
-
-    this.windOsc.connect(this.windFilter);
-    this.windFilter.connect(this.windGain);
-    this.windGain.connect(this.masterGain);
-    
-    this.windOsc.start();
-  }
-
-  private setupInsects() {
-    if (!this.ctx || !this.masterGain) return;
-
-    // High pitched sine wave modulated by an LFO to create buzzing
-    this.insectOsc = this.ctx.createOscillator();
-    this.insectOsc.type = 'sawtooth';
-    this.insectOsc.frequency.value = 4000;
-
-    this.insectGain = this.ctx.createGain();
-    this.insectGain.gain.value = 0;
-
-    // LFO for buzzing amplitude
-    this.insectLFO = this.ctx.createOscillator();
-    this.insectLFO.type = 'sine';
-    this.insectLFO.frequency.value = 30; // 30Hz flutter
-    
-    const lfoGain = this.ctx.createGain();
-    lfoGain.gain.value = 500; // Modulate frequency slightly? No, let's modulate amplitude.
-    
-    // Connect AM Synthesis
-    // Oscillator -> Gain (Modulated by LFO) -> Master
-    this.insectOsc.connect(this.insectGain);
-    this.insectGain.connect(this.masterGain);
-    
-    this.insectOsc.start();
-  }
-
-  private setupWinterHowl() {
-    if (!this.ctx || !this.masterGain) return;
-
-    // Resonant filter sweep on noise
-    const noiseBuffer = this.createWhiteNoise();
-    if (!noiseBuffer) return;
-
-    const src = this.ctx.createBufferSource();
-    src.buffer = noiseBuffer;
-    src.loop = true;
-
-    const filter = this.ctx.createBiquadFilter();
-    filter.type = 'bandpass';
-    filter.Q.value = 10; // High resonance for whistling
-    filter.frequency.value = 400;
-
-    this.howlGain = this.ctx.createGain();
-    this.howlGain.gain.value = 0;
-
-    src.connect(filter);
-    filter.connect(this.howlGain);
-    this.howlGain.connect(this.masterGain);
-    src.start();
-
-    // Automate the howl frequency
-    setInterval(() => {
-        if (this.ctx && filter && this.howlGain && this.howlGain.gain.value > 0.01) {
-            const t = this.ctx.currentTime;
-            filter.frequency.exponentialRampToValueAtTime(300 + Math.random() * 500, t + 2 + Math.random() * 2);
-        }
-    }, 4000);
-  }
-
-  // --- Control ---
-
-  setSeason(season: 'spring' | 'summer' | 'autumn' | 'winter') {
-    if (!this.ctx) return;
-    const t = this.ctx.currentTime;
-    const transTime = 2.0;
-
-    // Default settings
-    let windVol = 0.1;
-    let windFreq = 400;
-    let insectVol = 0.0;
-    let howlVol = 0.0;
-
-    switch(season) {
-      case 'spring':
-        windVol = 0.2;
-        windFreq = 600; // Light breeze
-        insectVol = 0.02; // Very faint
-        howlVol = 0.0;
-        break;
-      case 'summer':
-        windVol = 0.1;
-        windFreq = 300;
-        insectVol = 0.15; // Loud cicadas
-        howlVol = 0.0;
-        break;
-      case 'autumn':
-        windVol = 0.4;
-        windFreq = 150; // Deep blustery wind
-        insectVol = 0.0;
-        howlVol = 0.05; // Slight whistle
-        break;
-      case 'winter':
-        windVol = 0.6; // Strong wind
-        windFreq = 200; 
-        insectVol = 0.0;
-        howlVol = 0.2; // Loud howling
-        break;
+    for (let i = 0; i < length; i++) {
+        const n = i / length;
+        const vol = Math.pow(1 - n, decay); 
+        left[i] = (Math.random() * 2 - 1) * vol;
+        right[i] = (Math.random() * 2 - 1) * vol;
     }
 
-    // Apply
-    if (this.windGain) this.windGain.gain.setTargetAtTime(windVol, t, 1);
-    if (this.windFilter) this.windFilter.frequency.setTargetAtTime(windFreq, t, 1);
-    if (this.insectGain) this.insectGain.gain.setTargetAtTime(insectVol, t, 1);
-    if (this.howlGain) this.howlGain.gain.setTargetAtTime(howlVol, t, 1);
+    this.reverbNode = this.ctx.createConvolver();
+    this.reverbNode.buffer = impulse;
+    this.reverbGain = this.ctx.createGain();
+    this.reverbGain.gain.value = 0.2;
+
+    this.reverbNode.connect(this.reverbGain);
+    this.reverbGain.connect(this.masterGain);
   }
 
-  playBirdSound() {
+  // --- Triggers ---
+  playGrowthPulse() {
+      if(!this.ctx || !this.masterGain) return;
+      const t = this.ctx.currentTime;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      
+      // Higher pitch pulse for happiness
+      osc.frequency.setValueAtTime(220, t); 
+      osc.frequency.exponentialRampToValueAtTime(440, t + 0.5); 
+      
+      gain.gain.setValueAtTime(0, t);
+      gain.gain.linearRampToValueAtTime(0.05, t + 0.1);
+      gain.gain.linearRampToValueAtTime(0, t + 1.0);
+
+      osc.connect(gain);
+      gain.connect(this.masterGain);
+      osc.start(t);
+      osc.stop(t + 1.0);
+  }
+
+  playBirdSound(x: number, y: number, z: number) {
     if (!this.ctx || !this.masterGain) return;
-    // ... existing bird logic ...
     const t = this.ctx.currentTime;
+    
     const osc = this.ctx.createOscillator();
     const gain = this.ctx.createGain();
+    const panner = this.ctx.createPanner();
 
-    const type = Math.floor(Math.random() * 3);
-    if (type === 0) {
-        osc.frequency.setValueAtTime(2000, t);
-        osc.frequency.exponentialRampToValueAtTime(1000, t + 0.1);
-        osc.frequency.exponentialRampToValueAtTime(2500, t + 0.2);
-    } else if (type === 1) {
-        osc.frequency.setValueAtTime(1500, t);
-        osc.frequency.linearRampToValueAtTime(1800, t + 0.05);
-        osc.frequency.linearRampToValueAtTime(1500, t + 0.1);
-    } else {
-        osc.frequency.setValueAtTime(1200, t);
-        osc.frequency.exponentialRampToValueAtTime(800, t + 0.3);
-    }
+    panner.panningModel = 'HRTF';
+    panner.positionX.value = x;
+    panner.positionY.value = y;
+    panner.positionZ.value = z;
+
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(2000, t);
+    osc.frequency.exponentialRampToValueAtTime(2500, t + 0.1);
 
     gain.gain.setValueAtTime(0, t);
-    gain.gain.linearRampToValueAtTime(0.1, t + 0.05);
+    gain.gain.linearRampToValueAtTime(0.2, t + 0.05);
     gain.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
 
     osc.connect(gain);
-    gain.connect(this.masterGain);
+    gain.connect(panner);
+    panner.connect(this.masterGain);
+    if (this.reverbNode) panner.connect(this.reverbNode);
+
     osc.start(t);
     osc.stop(t + 0.4);
+  }
+
+  playLeafHit() {
+      if(!this.ctx || !this.masterGain) return;
+      const t = this.ctx.currentTime;
+      const bufferSize = this.ctx.sampleRate * 0.05; 
+      const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for(let i=0; i<bufferSize; i++) data[i] = Math.random() * 2 - 1;
+
+      const src = this.ctx.createBufferSource();
+      src.buffer = buffer;
+      const gain = this.ctx.createGain();
+      gain.gain.setValueAtTime(0.05, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.05);
+
+      src.connect(gain);
+      gain.connect(this.masterGain);
+      src.start(t);
+  }
+
+  // --- Main Control ---
+  setSeason(season: 'spring' | 'summer' | 'autumn' | 'winter') {
+    if (!this.ctx) return;
+    this.currentSeason = season;
+    const t = this.ctx.currentTime;
+
+    let reverbAmt = 0.2;
+
+    switch(season) {
+      case 'spring':
+        reverbAmt = 0.2;
+        break;
+      case 'summer':
+        reverbAmt = 0.1;
+        break;
+      case 'autumn':
+        reverbAmt = 0.2;
+        break;
+      case 'winter':
+        reverbAmt = 0.5; // Crystal clear reverb
+        break;
+    }
+
+    if (this.reverbGain) this.reverbGain.gain.setTargetAtTime(reverbAmt, t, 1);
   }
 }

@@ -4,10 +4,12 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { Sky, BakeShadows } from '@react-three/drei';
 import * as THREE from 'three';
 import { HandData } from './GestureHandler';
+import { AudioManager } from './AudioManager';
 
 interface ForestSceneProps {
     season: 'spring' | 'summer' | 'autumn' | 'winter';
     handData: HandData;
+    audioManager: React.MutableRefObject<AudioManager | null>;
 }
 
 // --- Procedural Textures (Unchanged) ---
@@ -67,17 +69,14 @@ const useProceduralTextures = () => {
   }, []);
 };
 
-// --- Hybrid Camera Control (Head + Hand) ---
+// --- Hybrid Camera Control (Unchanged) ---
 const HybridController = ({ handData }: { handData: HandData }) => {
     const { camera } = useThree();
     const keys = useRef<{ [key: string]: boolean }>({});
     const velocity = useRef(new THREE.Vector3());
-    
-    // Euler angles for rotation smoothing
     const currentYaw = useRef(0);
     const currentPitch = useRef(0);
 
-    // Listen for keyboard
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => { keys.current[e.code] = true; };
         const handleKeyUp = (e: KeyboardEvent) => { keys.current[e.code] = false; };
@@ -90,82 +89,55 @@ const HybridController = ({ handData }: { handData: HandData }) => {
     }, []);
 
     useFrame((state, delta) => {
-        // --- 1. Rotation Logic (Head Tracking) ---
-        // Joystick style: Looking left turns the camera left. 
-        // deadzone prevents drift when looking straight.
         const rotDeadzone = 0.15;
-        let rotSpeedY = 0; // Yaw speed
-        let rotSpeedX = 0; // Pitch speed
-
+        let rotSpeedY = 0;
+        let rotSpeedX = 0;
         if (Math.abs(handData.headYaw) > rotDeadzone) {
-            // Non-linear sensitivity
             const input = handData.headYaw;
-            // Negative input (looking left) should rotate camera positive Y (left)
             rotSpeedY = Math.sign(input) * Math.pow(Math.abs(input), 1.5) * 2.0;
         }
-
         if (Math.abs(handData.headPitch) > rotDeadzone) {
             const input = handData.headPitch;
-            // Input positive (looking up) -> Camera Pitch up (positive)
             rotSpeedX = Math.sign(input) * Math.pow(Math.abs(input), 1.5) * 1.5;
         }
-
-        // Apply rotation velocity
         currentYaw.current -= rotSpeedY * delta;
         currentPitch.current += rotSpeedX * delta;
-        
-        // Clamp pitch (Don't break neck)
         currentPitch.current = Math.max(-1.4, Math.min(1.4, currentPitch.current));
-
-        // Apply to camera
-        camera.rotation.order = 'YXZ'; // Important to rotate Y (Yaw) then X (Pitch)
+        camera.rotation.order = 'YXZ';
         camera.rotation.y = currentYaw.current;
         camera.rotation.x = currentPitch.current;
 
-
-        // --- 2. Movement Logic (Hands + Keys) ---
         let forwardSpeed = 0;
         let strafeSpeed = 0;
         let verticalSpeed = 0;
-        
         const moveDeadzone = 0.25;
 
-        // Hand Inputs
         if (handData.handCount > 0) {
-            // Forward / Backward (Gestures)
             if (handData.gesture === 'dual_open') forwardSpeed += 8; 
             else if (handData.gesture === 'dual_fist') forwardSpeed -= 5; 
 
-            // Strafe Left / Right (Hand X Position)
             if (Math.abs(handData.x - 0.5) > moveDeadzone) {
                 const input = handData.x - 0.5;
                 const sign = Math.sign(input);
                 strafeSpeed += sign * Math.pow(Math.abs(input), 1.5) * 15; 
             }
-
-            // Elevation Up / Down (Hand Y Position)
             if (Math.abs(handData.y - 0.5) > moveDeadzone) {
                 const input = handData.y - 0.5;
                 const sign = Math.sign(input);
                 verticalSpeed -= sign * Math.pow(Math.abs(input), 1.5) * 8;
             }
         }
-
-        // Keyboard Inputs
         if (keys.current['KeyW'] || keys.current['ArrowUp']) forwardSpeed += 12;
         if (keys.current['KeyS'] || keys.current['ArrowDown']) forwardSpeed -= 12;
         if (keys.current['KeyA'] || keys.current['ArrowLeft']) strafeSpeed -= 12;
         if (keys.current['KeyD'] || keys.current['ArrowRight']) strafeSpeed += 12;
         
-        // Apply velocity relative to camera look direction
         const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
         forward.y = 0;
         forward.normalize();
-        
         const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
         right.y = 0;
         right.normalize();
-
         const up = new THREE.Vector3(0, 1, 0); 
 
         const targetVelocity = new THREE.Vector3()
@@ -176,17 +148,192 @@ const HybridController = ({ handData }: { handData: HandData }) => {
         const damping = (forwardSpeed === 0 && strafeSpeed === 0 && verticalSpeed === 0) ? 10 : 3;
         velocity.current.lerp(targetVelocity, delta * damping);
         
-        if (velocity.current.lengthSq() > 0.01) {
-            camera.position.addScaledVector(velocity.current, delta);
-        }
-        
+        if (velocity.current.lengthSq() > 0.01) camera.position.addScaledVector(velocity.current, delta);
         if (camera.position.y < 2) camera.position.y = 2;
     });
 
-    return null; // No PointerLockControls anymore
+    return null;
 }
 
-// --- Scene Components (Unchanged) ---
+// --- Seasonal Particle Effects with Audio Sync ---
+
+const SpringFlowers = ({ audioManager }: { audioManager: React.MutableRefObject<AudioManager | null> }) => {
+    const meshRef = useRef<THREE.InstancedMesh>(null);
+    const count = 500;
+    const tempObj = new THREE.Object3D();
+    
+    // Static data
+    const initialScales = useMemo(() => new Float32Array(count).map(() => 0.5 + Math.random()), [count]);
+    const positions = useMemo(() => {
+        const arr = [];
+        for(let i=0; i<count; i++) {
+             const angle = Math.random() * Math.PI * 2;
+             const r = 10 + Math.random() * 80;
+             arr.push({ x: Math.cos(angle)*r, z: Math.sin(angle)*r, rot: Math.random() * Math.PI });
+        }
+        return arr;
+    }, [count]);
+
+    useEffect(() => {
+        if (!meshRef.current) return;
+        // Set initial colors once
+        for (let i = 0; i < count; i++) {
+             meshRef.current.setColorAt(i, new THREE.Color().setHSL(Math.random(), 0.8, 0.6));
+        }
+        meshRef.current.instanceColor!.needsUpdate = true;
+    }, []);
+
+    useFrame((state) => {
+        if (!meshRef.current) return;
+        
+        // Sync Visuals: Pulse growth
+        // Rhythm: 0.5Hz pulse
+        const time = state.clock.elapsedTime;
+        const pulse = Math.sin(time * 3) * 0.2 + 1.0; 
+        
+        // Trigger Audio: Occasional "growth pulse" sound on the beat
+        if (Math.floor(time * 3) > Math.floor((time - 0.016) * 3) && Math.random() > 0.8) {
+            audioManager.current?.playGrowthPulse();
+        }
+
+        for (let i = 0; i < count; i++) {
+            const pos = positions[i];
+            tempObj.position.set(pos.x, 0.5, pos.z);
+            tempObj.rotation.set(0, pos.rot + time * 0.1, 0); // Slow rotation
+            
+            // Apply pulse to scale
+            const scale = initialScales[i] * pulse;
+            tempObj.scale.set(scale, scale, scale);
+            
+            tempObj.updateMatrix();
+            meshRef.current.setMatrixAt(i, tempObj.matrix);
+        }
+        meshRef.current.instanceMatrix.needsUpdate = true;
+    });
+
+    return <instancedMesh ref={meshRef} args={[undefined, undefined, count]} castShadow><dodecahedronGeometry args={[0.3, 0]} /><meshStandardMaterial roughness={0.5} /></instancedMesh>;
+};
+
+const SummerBirds = ({ audioManager }: { audioManager: React.MutableRefObject<AudioManager | null> }) => {
+    const meshRef = useRef<THREE.InstancedMesh>(null);
+    const count = 30;
+    const birds = useMemo(() => new Array(count).fill(0).map(() => ({ 
+        speed: 5 + Math.random() * 5, 
+        offset: Math.random() * 100, 
+        radius: 20 + Math.random() * 40, 
+        yBase: 15 + Math.random() * 10 
+    })), []);
+    const dummy = new THREE.Object3D();
+
+    useFrame((state) => {
+        if (!meshRef.current) return;
+        const t = state.clock.getElapsedTime();
+
+        // Audio Sync: Trigger bird chirp at specific bird's location randomly
+        if (Math.random() < 0.01) {
+            const birdIdx = Math.floor(Math.random() * count);
+            const bird = birds[birdIdx];
+            const angle = t * (bird.speed * 0.1) + bird.offset;
+            const x = Math.cos(angle) * bird.radius;
+            const y = bird.yBase + Math.sin(t * 2 + bird.offset) * 2;
+            const z = Math.sin(angle) * bird.radius;
+            
+            audioManager.current?.playBirdSound(x, y, z);
+        }
+
+        birds.forEach((bird, i) => {
+            const angle = t * (bird.speed * 0.1) + bird.offset;
+            
+            // Visual Sync: Flap wings (simulated by scaling Y) to a fast beat
+            const flap = Math.sin(t * 15 + i) * 0.2 + 1; // 15Hz flap approx
+            
+            dummy.position.set(Math.cos(angle) * bird.radius, bird.yBase + Math.sin(t * 2 + bird.offset) * 2, Math.sin(angle) * bird.radius);
+            dummy.lookAt(Math.cos(angle + 0.1) * bird.radius, bird.yBase, Math.sin(angle + 0.1) * bird.radius);
+            dummy.scale.set(1, 1 * flap, 3); // Flapping effect
+            dummy.updateMatrix();
+            meshRef.current.setMatrixAt(i, dummy.matrix);
+        });
+        meshRef.current.instanceMatrix.needsUpdate = true;
+    });
+    return <instancedMesh ref={meshRef} args={[undefined, undefined, count]} castShadow><coneGeometry args={[0.2, 1, 4]} /><meshStandardMaterial color="#FFFFFF" /></instancedMesh>;
+};
+
+const AutumnLeaves = ({ audioManager }: { audioManager: React.MutableRefObject<AudioManager | null> }) => {
+    const meshRef = useRef<THREE.InstancedMesh>(null);
+    const count = 400;
+    const dummy = new THREE.Object3D();
+    const leaves = useMemo(() => new Array(count).fill(0).map(() => ({ 
+        x: (Math.random() - 0.5) * 100, 
+        y: Math.random() * 40, 
+        z: (Math.random() - 0.5) * 100, 
+        speed: 2 + Math.random() * 3, 
+        rotationSpeed: Math.random() * 5 
+    })), []);
+
+    useFrame((state, delta) => {
+        if (!meshRef.current) return;
+        
+        // Wind intensity simulation
+        const windStrength = (Math.sin(state.clock.elapsedTime * 0.5) * 0.5 + 0.5); 
+
+        leaves.forEach((leaf, i) => {
+            leaf.y -= leaf.speed * delta;
+            
+            // Audio/Physics Sync: Leaf hit ground
+            if (leaf.y < 0) {
+                // Trigger sound (probability reduced to avoid chaos)
+                if (Math.random() < 0.2) {
+                     audioManager.current?.playLeafHit();
+                }
+                leaf.y = 40;
+            }
+
+            dummy.position.set(leaf.x + Math.sin(state.clock.elapsedTime + i) * 2 * windStrength, leaf.y, leaf.z + Math.cos(state.clock.elapsedTime + i) * 2);
+            
+            // Visual Sync: Rotation depends on Wind Strength
+            const rot = leaf.rotationSpeed * delta * (1 + windStrength * 2);
+            dummy.rotation.x += rot; 
+            dummy.rotation.y += rot;
+            
+            dummy.updateMatrix();
+            meshRef.current.setMatrixAt(i, dummy.matrix);
+        });
+        meshRef.current.instanceMatrix.needsUpdate = true;
+    });
+    return <instancedMesh ref={meshRef} args={[undefined, undefined, count]}><planeGeometry args={[0.4, 0.4]} /><meshStandardMaterial color="#FF5722" side={THREE.DoubleSide} transparent /></instancedMesh>;
+};
+
+const WinterSnow = () => {
+    const meshRef = useRef<THREE.InstancedMesh>(null);
+    const count = 2000;
+    const dummy = new THREE.Object3D();
+    const flakes = useMemo(() => new Array(count).fill(0).map(() => ({ x: (Math.random() - 0.5) * 120, y: Math.random() * 50, z: (Math.random() - 0.5) * 120, speed: 4 + Math.random() * 4 })), []);
+    useFrame((state, delta) => {
+        if (!meshRef.current) return;
+        flakes.forEach((flake, i) => {
+            flake.y -= flake.speed * delta;
+            if (flake.y < 0) flake.y = 50;
+            dummy.position.set(flake.x + Math.sin(state.clock.elapsedTime + i) * 0.5, flake.y, flake.z);
+            dummy.rotation.set(Math.random(), Math.random(), Math.random());
+            dummy.updateMatrix();
+            meshRef.current.setMatrixAt(i, dummy.matrix);
+        });
+        meshRef.current.instanceMatrix.needsUpdate = true;
+    });
+    return <instancedMesh ref={meshRef} args={[undefined, undefined, count]}><boxGeometry args={[0.1, 0.1, 0.1]} /><meshBasicMaterial color="#FFFFFF" transparent opacity={0.8} /></instancedMesh>;
+};
+
+
+// --- Main Forest Scene ---
+
+const seasonColors = {
+    spring: { leaf: '#81C784', ground: '#66BB6A', sky: '#87CEEB', ambient: '#ffffff' },
+    summer: { leaf: '#2E7D32', ground: '#33691E', sky: '#4FC3F7', ambient: '#ffffee' },
+    autumn: { leaf: '#FF5722', ground: '#8D6E63', sky: '#FFCC80', ambient: '#ffe0b2' },
+    winter: { leaf: '#CFD8DC', ground: '#ECEFF1', sky: '#B0BEC5', ambient: '#e0f7fa' },
+};
+
+// Scene Component (Unchanged mostly) (Unchanged mostly)
 const WoodenBench = ({ position, rotation, texture }: any) => {
     return (
         <group position={position} rotation={rotation}>
@@ -260,98 +407,7 @@ const Terrain = ({ texture, color }: any) => {
     );
 };
 
-// --- Seasonal Particle Effects (Same as before) ---
-const SpringFlowers = () => {
-    const meshRef = useRef<THREE.InstancedMesh>(null);
-    const count = 500;
-    const tempObj = new THREE.Object3D();
-    useEffect(() => {
-        if (!meshRef.current) return;
-        for (let i = 0; i < count; i++) {
-            const angle = Math.random() * Math.PI * 2;
-            const r = 10 + Math.random() * 80;
-            tempObj.position.set(Math.cos(angle) * r, 0.5, Math.sin(angle) * r);
-            tempObj.rotation.set(Math.random() * 0.5, Math.random() * Math.PI, 0);
-            tempObj.scale.setScalar(0.5 + Math.random());
-            tempObj.updateMatrix();
-            meshRef.current.setMatrixAt(i, tempObj.matrix);
-            meshRef.current.setColorAt(i, new THREE.Color().setHSL(Math.random(), 0.8, 0.6));
-        }
-        meshRef.current.instanceMatrix.needsUpdate = true;
-        if (meshRef.current.instanceColor) meshRef.current.instanceColor.needsUpdate = true;
-    }, []);
-    return <instancedMesh ref={meshRef} args={[undefined, undefined, count]} castShadow><dodecahedronGeometry args={[0.3, 0]} /><meshStandardMaterial roughness={0.5} /></instancedMesh>;
-};
-const SummerBirds = () => {
-    const meshRef = useRef<THREE.InstancedMesh>(null);
-    const count = 30;
-    const birds = useMemo(() => new Array(count).fill(0).map(() => ({ speed: 5 + Math.random() * 5, offset: Math.random() * 100, radius: 20 + Math.random() * 40, yBase: 15 + Math.random() * 10 })), []);
-    const dummy = new THREE.Object3D();
-    useFrame((state) => {
-        if (!meshRef.current) return;
-        const t = state.clock.getElapsedTime();
-        birds.forEach((bird, i) => {
-            const angle = t * (bird.speed * 0.1) + bird.offset;
-            dummy.position.set(Math.cos(angle) * bird.radius, bird.yBase + Math.sin(t * 2 + bird.offset) * 2, Math.sin(angle) * bird.radius);
-            dummy.lookAt(Math.cos(angle + 0.1) * bird.radius, bird.yBase, Math.sin(angle + 0.1) * bird.radius);
-            dummy.scale.set(1, 1, 3);
-            dummy.updateMatrix();
-            meshRef.current.setMatrixAt(i, dummy.matrix);
-        });
-        meshRef.current.instanceMatrix.needsUpdate = true;
-    });
-    return <instancedMesh ref={meshRef} args={[undefined, undefined, count]} castShadow><coneGeometry args={[0.2, 1, 4]} /><meshStandardMaterial color="#FFFFFF" /></instancedMesh>;
-};
-const AutumnLeaves = () => {
-    const meshRef = useRef<THREE.InstancedMesh>(null);
-    const count = 400;
-    const dummy = new THREE.Object3D();
-    const leaves = useMemo(() => new Array(count).fill(0).map(() => ({ x: (Math.random() - 0.5) * 100, y: Math.random() * 40, z: (Math.random() - 0.5) * 100, speed: 2 + Math.random() * 3, rotationSpeed: Math.random() * 5 })), []);
-    useFrame((state, delta) => {
-        if (!meshRef.current) return;
-        leaves.forEach((leaf, i) => {
-            leaf.y -= leaf.speed * delta;
-            if (leaf.y < 0) leaf.y = 40;
-            dummy.position.set(leaf.x + Math.sin(state.clock.elapsedTime + i) * 2, leaf.y, leaf.z + Math.cos(state.clock.elapsedTime + i) * 2);
-            dummy.rotation.x += leaf.rotationSpeed * delta; dummy.rotation.y += leaf.rotationSpeed * delta;
-            dummy.updateMatrix();
-            meshRef.current.setMatrixAt(i, dummy.matrix);
-        });
-        meshRef.current.instanceMatrix.needsUpdate = true;
-    });
-    return <instancedMesh ref={meshRef} args={[undefined, undefined, count]}><planeGeometry args={[0.4, 0.4]} /><meshStandardMaterial color="#FF5722" side={THREE.DoubleSide} transparent /></instancedMesh>;
-};
-const WinterSnow = () => {
-    const meshRef = useRef<THREE.InstancedMesh>(null);
-    const count = 2000;
-    const dummy = new THREE.Object3D();
-    const flakes = useMemo(() => new Array(count).fill(0).map(() => ({ x: (Math.random() - 0.5) * 120, y: Math.random() * 50, z: (Math.random() - 0.5) * 120, speed: 4 + Math.random() * 4 })), []);
-    useFrame((state, delta) => {
-        if (!meshRef.current) return;
-        flakes.forEach((flake, i) => {
-            flake.y -= flake.speed * delta;
-            if (flake.y < 0) flake.y = 50;
-            dummy.position.set(flake.x + Math.sin(state.clock.elapsedTime + i) * 0.5, flake.y, flake.z);
-            dummy.rotation.set(Math.random(), Math.random(), Math.random());
-            dummy.updateMatrix();
-            meshRef.current.setMatrixAt(i, dummy.matrix);
-        });
-        meshRef.current.instanceMatrix.needsUpdate = true;
-    });
-    return <instancedMesh ref={meshRef} args={[undefined, undefined, count]}><boxGeometry args={[0.1, 0.1, 0.1]} /><meshBasicMaterial color="#FFFFFF" transparent opacity={0.8} /></instancedMesh>;
-};
-
-
-// --- Main Forest Scene ---
-
-const seasonColors = {
-    spring: { leaf: '#81C784', ground: '#66BB6A', sky: '#87CEEB', ambient: '#ffffff' },
-    summer: { leaf: '#2E7D32', ground: '#33691E', sky: '#4FC3F7', ambient: '#ffffee' },
-    autumn: { leaf: '#FF5722', ground: '#8D6E63', sky: '#FFCC80', ambient: '#ffe0b2' },
-    winter: { leaf: '#CFD8DC', ground: '#ECEFF1', sky: '#B0BEC5', ambient: '#e0f7fa' },
-};
-
-export const ForestScene: React.FC<ForestSceneProps> = ({ season, handData }) => {
+export const ForestScene: React.FC<ForestSceneProps> = ({ season, handData, audioManager }) => {
   const textures = useProceduralTextures();
   const colors = seasonColors[season];
 
@@ -365,25 +421,26 @@ export const ForestScene: React.FC<ForestSceneProps> = ({ season, handData }) =>
         <orthographicCamera attach="shadow-camera" args={[-40, 40, 40, -40]} />
       </directionalLight>
       <Sky sunPosition={season === 'winter' ? [10, 5, 100] : [100, 40, 100]} turbidity={season === 'winter' ? 10 : 2} />
-      <fog attach="fog" args={[colors.ambient, 10, season === 'winter' ? 40 : 80]} />
+      {/* Visual Coldness: Winter has denser fog matching the reverb effect */}
+      <fog attach="fog" args={[colors.ambient, 10, season === 'winter' ? 30 : 80]} />
       <BakeShadows />
 
       {/* Controllers */}
       <HybridController handData={handData} />
 
-      {/* Seasonal Effects */}
-      {season === 'spring' && <SpringFlowers />}
-      {season === 'summer' && <SummerBirds />}
-      {season === 'autumn' && <AutumnLeaves />}
+      {/* Seasonal Effects (Now with Audio Links) */}
+      {season === 'spring' && <SpringFlowers audioManager={audioManager} />}
+      {season === 'summer' && <SummerBirds audioManager={audioManager} />}
+      {season === 'autumn' && <AutumnLeaves audioManager={audioManager} />}
       {season === 'winter' && <WinterSnow />}
 
       {/* World Content */}
       <group>
         <Terrain texture={textures.ground} color={colors.ground} />
         
-        {/* Amphitheater Seating (Benches) */}
+        {/* Benches */}
         {Array.from({ length: 5 }).map((_, i) => {
-            const angle = (i / 4) * Math.PI - Math.PI / 2; // Semi-circle
+            const angle = (i / 4) * Math.PI - Math.PI / 2;
             const x = Math.cos(angle) * 10;
             const z = Math.sin(angle) * 10;
             return <WoodenBench key={`bench-${i}`} position={[x, 0, z]} rotation={[0, -angle, 0]} texture={textures.wood} />
@@ -395,14 +452,13 @@ export const ForestScene: React.FC<ForestSceneProps> = ({ season, handData }) =>
             return <WoodenBench key={`bench-outer-${i}`} position={[x, 0.5, z]} rotation={[0, -angle, 0]} texture={textures.wood} />
         })}
 
-        {/* Trees (Increased Density) */}
+        {/* Trees */}
         {Array.from({ length: 150 }).map((_, i) => {
              const angle = Math.random() * Math.PI * 2;
-             // Keep center clear (radius > 20)
-             const dist = 22 + Math.pow(Math.random(), 2) * 60; // Spread further out
+             const dist = 22 + Math.pow(Math.random(), 2) * 60; 
              const x = Math.cos(angle) * dist;
              const z = Math.sin(angle) * dist;
-             const scale = 0.8 + Math.random() * 0.8; // More scale variance
+             const scale = 0.8 + Math.random() * 0.8; 
              return (
                  <ProceduralTree 
                     key={i} 
