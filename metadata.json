@@ -1,0 +1,7 @@
+{
+  "name": "Forest Amphitheater 3D",
+  "description": "A basic 3D reconstruction of a forest amphitheater using Three.js and React, focusing on layout, lighting, and volume matching.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
