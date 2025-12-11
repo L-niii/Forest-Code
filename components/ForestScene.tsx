@@ -1,20 +1,19 @@
 
 import React, { useMemo, useRef, useEffect, useState } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { PointerLockControls, Sky, BakeShadows, PerspectiveCamera } from '@react-three/drei';
+import { Sky, BakeShadows, PointerLockControls } from '@react-three/drei';
 import * as THREE from 'three';
+import { HandData } from './GestureHandler';
 
-// --- Types ---
 interface ForestSceneProps {
-    season?: 'spring' | 'summer' | 'autumn' | 'winter';
-    gesture: 'none' | 'fist' | 'open';
-    intensity: number; // 0 to 1 based on hold duration
+    season: 'spring' | 'summer' | 'autumn' | 'winter';
+    handData: HandData;
 }
 
-// --- Procedural Texture Generator (Unchanged mostly) ---
+// --- Procedural Textures ---
 const useProceduralTextures = () => {
   return useMemo(() => {
-    const createTexture = (type: 'bark' | 'leaf' | 'ground' | 'wood') => {
+    const createTexture = (type: 'bark' | 'leaf' | 'ground' | 'wood' | 'snow') => {
       const canvas = document.createElement('canvas');
       canvas.width = 512;
       canvas.height = 512;
@@ -29,16 +28,8 @@ const useProceduralTextures = () => {
             ctx.fillRect(Math.random() * 512, 0, 2 + Math.random() * 5, 512);
         }
       } else if (type === 'leaf') {
-        ctx.clearRect(0, 0, 512, 512);
-        for (let i = 0; i < 200; i++) {
-           const x = Math.random() * 512;
-           const y = Math.random() * 512;
-           ctx.beginPath();
-           ctx.arc(x, y, 10 + Math.random() * 20, 0, Math.PI * 2);
-           const val = 200 + Math.random() * 55;
-           ctx.fillStyle = `rgba(${val}, ${val}, ${val}, 0.8)`;
-           ctx.fill();
-        }
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0,0,512,512);
       } else if (type === 'ground') {
         ctx.fillStyle = '#808080';
         ctx.fillRect(0, 0, 512, 512);
@@ -48,15 +39,16 @@ const useProceduralTextures = () => {
            ctx.fillRect(Math.random() * 512, Math.random() * 512, 4, 4);
         }
       } else if (type === 'wood') {
-        ctx.fillStyle = '#8d6e63';
+        ctx.fillStyle = '#6d4c41'; // Lighter wood for benches
         ctx.fillRect(0, 0, 512, 512);
-        ctx.strokeStyle = '#6d4c41';
-        ctx.lineWidth = 2;
-        for (let i = 0; i < 50; i++) {
-            ctx.beginPath();
-            ctx.moveTo(0, i * 10 + Math.random() * 20);
-            ctx.bezierCurveTo(150, i * 10 + Math.random() * 50, 350, i * 10 - Math.random() * 50, 512, i * 10);
-            ctx.stroke();
+        ctx.strokeStyle = '#5d4037';
+        ctx.lineWidth = 4;
+        // Wood grain
+        for (let i = 0; i < 20; i++) {
+             ctx.beginPath();
+             ctx.moveTo(0, i * 25);
+             ctx.lineTo(512, i * 25 + (Math.random() - 0.5) * 20);
+             ctx.stroke();
         }
       }
 
@@ -75,122 +67,159 @@ const useProceduralTextures = () => {
   }, []);
 };
 
-// --- First Person Logic ---
-const FirstPersonController = () => {
+// --- Hybrid Camera Control ---
+const HybridController = ({ handData }: { handData: HandData }) => {
     const { camera } = useThree();
-    const [moveState, setMoveState] = useState({ forward: false, backward: false, left: false, right: false });
+    const keys = useRef<{ [key: string]: boolean }>({});
     const velocity = useRef(new THREE.Vector3());
-    const direction = useRef(new THREE.Vector3());
 
+    // Listen for keyboard
     useEffect(() => {
-        const onKeyDown = (event: KeyboardEvent) => {
-            switch (event.code) {
-                case 'ArrowUp':
-                case 'KeyW': setMoveState(s => ({ ...s, forward: true })); break;
-                case 'ArrowLeft':
-                case 'KeyA': setMoveState(s => ({ ...s, left: true })); break;
-                case 'ArrowDown':
-                case 'KeyS': setMoveState(s => ({ ...s, backward: true })); break;
-                case 'ArrowRight':
-                case 'KeyD': setMoveState(s => ({ ...s, right: true })); break;
-            }
-        };
-        const onKeyUp = (event: KeyboardEvent) => {
-            switch (event.code) {
-                case 'ArrowUp':
-                case 'KeyW': setMoveState(s => ({ ...s, forward: false })); break;
-                case 'ArrowLeft':
-                case 'KeyA': setMoveState(s => ({ ...s, left: false })); break;
-                case 'ArrowDown':
-                case 'KeyS': setMoveState(s => ({ ...s, backward: false })); break;
-                case 'ArrowRight':
-                case 'KeyD': setMoveState(s => ({ ...s, right: false })); break;
-            }
-        };
-        document.addEventListener('keydown', onKeyDown);
-        document.addEventListener('keyup', onKeyUp);
+        const handleKeyDown = (e: KeyboardEvent) => { keys.current[e.code] = true; };
+        const handleKeyUp = (e: KeyboardEvent) => { keys.current[e.code] = false; };
+        window.addEventListener('keydown', handleKeyDown);
+        window.addEventListener('keyup', handleKeyUp);
         return () => {
-            document.removeEventListener('keydown', onKeyDown);
-            document.removeEventListener('keyup', onKeyUp);
+            window.removeEventListener('keydown', handleKeyDown);
+            window.removeEventListener('keyup', handleKeyUp);
         };
     }, []);
 
     useFrame((state, delta) => {
-        // Friction
-        velocity.current.x -= velocity.current.x * 10.0 * delta;
-        velocity.current.z -= velocity.current.z * 10.0 * delta;
-
-        // Direction
-        direction.current.z = Number(moveState.forward) - Number(moveState.backward);
-        direction.current.x = Number(moveState.left) - Number(moveState.right);
-        direction.current.normalize();
-
-        const speed = 40.0 * delta; // Adjust speed
-
-        if (moveState.forward || moveState.backward) velocity.current.z -= direction.current.z * speed;
-        if (moveState.left || moveState.right) velocity.current.x -= direction.current.x * speed;
-
-        camera.translateX(-velocity.current.x * delta);
-        camera.translateZ(velocity.current.z * delta);
+        // --- 1. Rotation Logic ---
+        // Mouse controls rotation via PointerLockControls. 
+        // We REMOVED hand rotation to allow hand translation.
         
-        // Head Bob
-        const isMoving = moveState.forward || moveState.backward || moveState.left || moveState.right;
-        const time = state.clock.getElapsedTime();
-        if (isMoving) {
-            camera.position.y = 10 + Math.sin(time * 10) * 0.3; // 10 is base eye height
-        } else {
-             // Breathing
-            camera.position.y = 10 + Math.sin(time * 2) * 0.1;
+        // --- 2. Movement Logic ---
+        let forwardSpeed = 0;
+        let strafeSpeed = 0;
+        let verticalSpeed = 0;
+        
+        const deadzone = 0.25;
+
+        // Hand Inputs
+        if (handData.handCount > 0) {
+            // Forward / Backward (Gestures)
+            if (handData.gesture === 'dual_open') forwardSpeed += 8; 
+            else if (handData.gesture === 'dual_fist') forwardSpeed -= 5; 
+
+            // Strafe Left / Right (Hand X Position)
+            // Hand Right (x > 0.5) -> Move Right
+            if (Math.abs(handData.x - 0.5) > deadzone) {
+                const input = handData.x - 0.5;
+                const sign = Math.sign(input);
+                strafeSpeed += sign * Math.pow(Math.abs(input), 1.5) * 15; // Speed multiplier
+            }
+
+            // Elevation Up / Down (Hand Y Position)
+            // Hand Up (y < 0.5) -> Move Up. Hand Down (y > 0.5) -> Move Down
+            if (Math.abs(handData.y - 0.5) > deadzone) {
+                const input = handData.y - 0.5;
+                // input is positive when hand is down. We want down to be negative Y? 
+                // Actually usually in games: E/Q or Space/Shift.
+                // Let's map Hand Up -> Camera Up (Y+), Hand Down -> Camera Down (Y-)
+                // input > 0 (Down) -> verticalSpeed -
+                const sign = Math.sign(input);
+                verticalSpeed -= sign * Math.pow(Math.abs(input), 1.5) * 8;
+            }
+        }
+
+        // Keyboard Inputs (Additive)
+        if (keys.current['KeyW'] || keys.current['ArrowUp']) forwardSpeed += 12;
+        if (keys.current['KeyS'] || keys.current['ArrowDown']) forwardSpeed -= 12;
+        
+        if (keys.current['KeyA'] || keys.current['ArrowLeft']) strafeSpeed -= 12;
+        if (keys.current['KeyD'] || keys.current['ArrowRight']) strafeSpeed += 12;
+        
+        if (keys.current['Space']) verticalSpeed += 8;
+        if (keys.current['ShiftLeft']) verticalSpeed -= 8;
+
+        // Apply
+        const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+        forward.y = 0;
+        forward.normalize();
+        
+        const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
+        right.y = 0;
+        right.normalize();
+
+        const up = new THREE.Vector3(0, 1, 0); // World Up
+
+        const targetVelocity = new THREE.Vector3()
+            .addScaledVector(forward, forwardSpeed)
+            .addScaledVector(right, strafeSpeed)
+            .addScaledVector(up, verticalSpeed);
+
+        const damping = (forwardSpeed === 0 && strafeSpeed === 0 && verticalSpeed === 0) ? 10 : 3;
+        velocity.current.lerp(targetVelocity, delta * damping);
+        
+        if (velocity.current.lengthSq() > 0.01) {
+            camera.position.addScaledVector(velocity.current, delta);
+        }
+        
+        // Prevent going underground
+        if (camera.position.y < 2) camera.position.y = 2;
+        
+        // Height bob (only if moving horizontally)
+        const horizontalSpeed = Math.sqrt(velocity.current.x**2 + velocity.current.z**2);
+        if (horizontalSpeed > 0.5) {
+            // Apply bob on top of current Y
+            // But since we control Y now, bob might interfere. 
+            // Let's make bob very subtle or disable if actively flying.
+            if (Math.abs(verticalSpeed) < 0.1) {
+                 // Subtle bob
+                 camera.position.y += Math.sin(state.clock.elapsedTime * 10) * 0.02;
+            }
         }
     });
 
-    return null;
+    return <PointerLockControls selector="#canvas-container" />;
 }
 
 // --- Scene Components ---
 
-const ProceduralTree = ({ position, scale = 1, textures, leafColor, windIntensity, isBirdActive }: any) => {
-    const rotationY = useMemo(() => Math.random() * Math.PI, []);
-    const groupRef = useRef<THREE.Group>(null);
-    const leafRef = useRef<THREE.Group>(null);
-    const hasBird = useMemo(() => Math.random() > 0.7, []); // 30% trees have birds
-
-    useFrame((state) => {
-        if (groupRef.current && windIntensity > 0) {
-            // Wind sway logic
-            const time = state.clock.getElapsedTime();
-            const noise = Math.sin(time * 2 + position[0]); 
-            // Sway increases with height (approximated by rotation Z)
-            const sway = noise * windIntensity * 0.1; 
-            groupRef.current.rotation.z = sway;
-        }
-    });
-    
+const WoodenBench = ({ position, rotation, texture }: any) => {
     return (
-        <group ref={groupRef} position={position} scale={[scale, scale, scale]} rotation={[0, rotationY, 0]}>
+        <group position={position} rotation={rotation}>
+            {/* Seat */}
+            <mesh position={[0, 1.5, 0]} castShadow receiveShadow>
+                <boxGeometry args={[6, 0.2, 1.5]} />
+                <meshStandardMaterial map={texture} color="#8d6e63" roughness={0.8} />
+            </mesh>
+            {/* Legs */}
+            <mesh position={[-2.5, 0.75, 0]} castShadow>
+                <boxGeometry args={[0.3, 1.5, 1.2]} />
+                <meshStandardMaterial map={texture} color="#6d4c41" />
+            </mesh>
+            <mesh position={[2.5, 0.75, 0]} castShadow>
+                <boxGeometry args={[0.3, 1.5, 1.2]} />
+                <meshStandardMaterial map={texture} color="#6d4c41" />
+            </mesh>
+        </group>
+    );
+};
+
+const ProceduralTree = ({ position, scale = 1, textures, leafColor }: any) => {
+    const rotationY = useMemo(() => Math.random() * Math.PI, []);
+    return (
+        <group position={position} scale={[scale, scale, scale]} rotation={[0, rotationY, 0]}>
             <mesh castShadow receiveShadow position={[0, 1.5, 0]}>
                 <cylinderGeometry args={[0.15, 0.25, 3, 7]} />
                 <meshStandardMaterial map={textures.bark} roughness={0.9} color="#5d4037" />
             </mesh>
-            
-            <group ref={leafRef} position={[0, 2.5, 0]}>
+            <group position={[0, 2.5, 0]}>
                  <mesh castShadow receiveShadow position={[0, 0, 0]} rotation={[0.5, 0, 0]}>
                     <dodecahedronGeometry args={[1.2, 0]} />
-                    <meshStandardMaterial map={textures.leaf} color={leafColor} roughness={0.8} transparent alphaTest={0.5} side={THREE.DoubleSide} />
+                    <meshStandardMaterial map={textures.leaf} color={leafColor} roughness={0.8} />
                  </mesh>
                  <mesh castShadow receiveShadow position={[0.4, 1.2, -0.3]} rotation={[0, 1, 0.2]}>
                     <dodecahedronGeometry args={[1.0, 0]} />
-                    <meshStandardMaterial map={textures.leaf} color={leafColor} roughness={0.8} transparent alphaTest={0.5} side={THREE.DoubleSide} />
+                    <meshStandardMaterial map={textures.leaf} color={leafColor} roughness={0.8} />
                  </mesh>
                   <mesh castShadow receiveShadow position={[-0.2, 2.0, 0.2]}>
                     <dodecahedronGeometry args={[0.8, 0]} />
-                    <meshStandardMaterial map={textures.leaf} color={leafColor} roughness={0.8} transparent alphaTest={0.5} side={THREE.DoubleSide} />
+                    <meshStandardMaterial map={textures.leaf} color={leafColor} roughness={0.8} />
                  </mesh>
-
-                 {/* Visual Feedback for Birds */}
-                 {hasBird && isBirdActive && (
-                     <pointLight position={[0, 3, 0]} color="#FFD700" intensity={5} distance={5} />
-                 )}
             </group>
         </group>
     );
@@ -198,7 +227,7 @@ const ProceduralTree = ({ position, scale = 1, textures, leafColor, windIntensit
 
 const Terrain = ({ texture, color }: any) => {
     const geometry = useMemo(() => {
-        const geo = new THREE.PlaneGeometry(120, 120, 64, 64);
+        const geo = new THREE.PlaneGeometry(160, 160, 64, 64);
         const posAttribute = geo.attributes.position;
         for (let i = 0; i < posAttribute.count; i++) {
             const x = posAttribute.getX(i);
@@ -208,7 +237,6 @@ const Terrain = ({ texture, color }: any) => {
             if (dist > 15) {
                 zHeight += (dist - 15) * 0.15;
                 zHeight += Math.sin(x * 0.2) * 0.5 + Math.cos(y * 0.2) * 0.5;
-                zHeight += (Math.random() - 0.5) * 0.3;
             } else {
                  zHeight += (Math.random() - 0.5) * 0.1;
             }
@@ -217,7 +245,7 @@ const Terrain = ({ texture, color }: any) => {
         geo.computeVertexNormals();
         return geo;
     }, []);
-    texture.repeat.set(20, 20);
+    texture.repeat.set(24, 24);
     return (
         <mesh geometry={geometry} rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.5, 0]} receiveShadow>
             <meshStandardMaterial map={texture} color={color} roughness={1} bumpMap={texture} bumpScale={0.5} />
@@ -225,72 +253,149 @@ const Terrain = ({ texture, color }: any) => {
     );
 };
 
-const Amphitheater = ({ texture }: { texture: THREE.Texture }) => {
-  texture.repeat.set(1, 0.2);
-  const benches = useMemo(() => {
-    const items: React.ReactElement[] = [];
-    const tiers = [{ radius: 6, count: 16, height: 0.4 }, { radius: 8, count: 20, height: 0.8 }, { radius: 10, count: 24, height: 1.2 }];
-    tiers.forEach((tier, tIdx) => {
-        for (let i = 0; i < tier.count; i++) {
-            const angle = (Math.PI / tier.count) * i * 1.1 - 0.1;
-            const x = Math.cos(angle) * tier.radius;
-            const z = Math.sin(angle) * tier.radius;
-            items.push(
-                <group key={`bench-${tIdx}-${i}`} position={[x, tier.height, z]} rotation={[0, -angle, 0]}>
-                    <mesh castShadow receiveShadow position={[0, 0, 0]}><boxGeometry args={[1.4, 0.08, 0.5]} /><meshStandardMaterial map={texture} color="#8d6e63" roughness={0.8} /></mesh>
-                    <mesh position={[-0.5, -tier.height/2 - 0.1, 0]} castShadow><cylinderGeometry args={[0.05, 0.05, tier.height + 0.2]} /><meshStandardMaterial map={texture} color="#5d4037" /></mesh>
-                    <mesh position={[0.5, -tier.height/2 - 0.1, 0]} castShadow><cylinderGeometry args={[0.05, 0.05, tier.height + 0.2]} /><meshStandardMaterial map={texture} color="#5d4037" /></mesh>
-                </group>
-            );
+// --- Seasonal Particle Effects (Same as before) ---
+const SpringFlowers = () => {
+    const meshRef = useRef<THREE.InstancedMesh>(null);
+    const count = 500;
+    const tempObj = new THREE.Object3D();
+    useEffect(() => {
+        if (!meshRef.current) return;
+        for (let i = 0; i < count; i++) {
+            const angle = Math.random() * Math.PI * 2;
+            const r = 10 + Math.random() * 80;
+            tempObj.position.set(Math.cos(angle) * r, 0.5, Math.sin(angle) * r);
+            tempObj.rotation.set(Math.random() * 0.5, Math.random() * Math.PI, 0);
+            tempObj.scale.setScalar(0.5 + Math.random());
+            tempObj.updateMatrix();
+            meshRef.current.setMatrixAt(i, tempObj.matrix);
+            meshRef.current.setColorAt(i, new THREE.Color().setHSL(Math.random(), 0.8, 0.6));
         }
-    });
-    return items;
-  }, [texture]);
-  return <group position={[0, 0, -2]} rotation={[0, Math.PI / 2, 0]}>{benches}</group>;
+        meshRef.current.instanceMatrix.needsUpdate = true;
+        if (meshRef.current.instanceColor) meshRef.current.instanceColor.needsUpdate = true;
+    }, []);
+    return <instancedMesh ref={meshRef} args={[undefined, undefined, count]} castShadow><dodecahedronGeometry args={[0.3, 0]} /><meshStandardMaterial roughness={0.5} /></instancedMesh>;
 };
+const SummerBirds = () => {
+    const meshRef = useRef<THREE.InstancedMesh>(null);
+    const count = 30;
+    const birds = useMemo(() => new Array(count).fill(0).map(() => ({ speed: 5 + Math.random() * 5, offset: Math.random() * 100, radius: 20 + Math.random() * 40, yBase: 15 + Math.random() * 10 })), []);
+    const dummy = new THREE.Object3D();
+    useFrame((state) => {
+        if (!meshRef.current) return;
+        const t = state.clock.getElapsedTime();
+        birds.forEach((bird, i) => {
+            const angle = t * (bird.speed * 0.1) + bird.offset;
+            dummy.position.set(Math.cos(angle) * bird.radius, bird.yBase + Math.sin(t * 2 + bird.offset) * 2, Math.sin(angle) * bird.radius);
+            dummy.lookAt(Math.cos(angle + 0.1) * bird.radius, bird.yBase, Math.sin(angle + 0.1) * bird.radius);
+            dummy.scale.set(1, 1, 3);
+            dummy.updateMatrix();
+            meshRef.current.setMatrixAt(i, dummy.matrix);
+        });
+        meshRef.current.instanceMatrix.needsUpdate = true;
+    });
+    return <instancedMesh ref={meshRef} args={[undefined, undefined, count]} castShadow><coneGeometry args={[0.2, 1, 4]} /><meshStandardMaterial color="#FFFFFF" /></instancedMesh>;
+};
+const AutumnLeaves = () => {
+    const meshRef = useRef<THREE.InstancedMesh>(null);
+    const count = 400;
+    const dummy = new THREE.Object3D();
+    const leaves = useMemo(() => new Array(count).fill(0).map(() => ({ x: (Math.random() - 0.5) * 100, y: Math.random() * 40, z: (Math.random() - 0.5) * 100, speed: 2 + Math.random() * 3, rotationSpeed: Math.random() * 5 })), []);
+    useFrame((state, delta) => {
+        if (!meshRef.current) return;
+        leaves.forEach((leaf, i) => {
+            leaf.y -= leaf.speed * delta;
+            if (leaf.y < 0) leaf.y = 40;
+            dummy.position.set(leaf.x + Math.sin(state.clock.elapsedTime + i) * 2, leaf.y, leaf.z + Math.cos(state.clock.elapsedTime + i) * 2);
+            dummy.rotation.x += leaf.rotationSpeed * delta; dummy.rotation.y += leaf.rotationSpeed * delta;
+            dummy.updateMatrix();
+            meshRef.current.setMatrixAt(i, dummy.matrix);
+        });
+        meshRef.current.instanceMatrix.needsUpdate = true;
+    });
+    return <instancedMesh ref={meshRef} args={[undefined, undefined, count]}><planeGeometry args={[0.4, 0.4]} /><meshStandardMaterial color="#FF5722" side={THREE.DoubleSide} transparent /></instancedMesh>;
+};
+const WinterSnow = () => {
+    const meshRef = useRef<THREE.InstancedMesh>(null);
+    const count = 2000;
+    const dummy = new THREE.Object3D();
+    const flakes = useMemo(() => new Array(count).fill(0).map(() => ({ x: (Math.random() - 0.5) * 120, y: Math.random() * 50, z: (Math.random() - 0.5) * 120, speed: 4 + Math.random() * 4 })), []);
+    useFrame((state, delta) => {
+        if (!meshRef.current) return;
+        flakes.forEach((flake, i) => {
+            flake.y -= flake.speed * delta;
+            if (flake.y < 0) flake.y = 50;
+            dummy.position.set(flake.x + Math.sin(state.clock.elapsedTime + i) * 0.5, flake.y, flake.z);
+            dummy.rotation.set(Math.random(), Math.random(), Math.random());
+            dummy.updateMatrix();
+            meshRef.current.setMatrixAt(i, dummy.matrix);
+        });
+        meshRef.current.instanceMatrix.needsUpdate = true;
+    });
+    return <instancedMesh ref={meshRef} args={[undefined, undefined, count]}><boxGeometry args={[0.1, 0.1, 0.1]} /><meshBasicMaterial color="#FFFFFF" transparent opacity={0.8} /></instancedMesh>;
+};
+
+
+// --- Main Forest Scene ---
 
 const seasonColors = {
-    spring: { leaf: '#4CAF50', ground: '#66BB6A', sky: '#87CEEB', ambient: '#ffffff' },
+    spring: { leaf: '#81C784', ground: '#66BB6A', sky: '#87CEEB', ambient: '#ffffff' },
     summer: { leaf: '#2E7D32', ground: '#33691E', sky: '#4FC3F7', ambient: '#ffffee' },
-    autumn: { leaf: '#FF9800', ground: '#D7CCC8', sky: '#FFCC80', ambient: '#ffe0b2' },
-    winter: { leaf: '#9E9E9E', ground: '#FFFFFF', sky: '#B0BEC5', ambient: '#e0f7fa' },
+    autumn: { leaf: '#FF5722', ground: '#8D6E63', sky: '#FFCC80', ambient: '#ffe0b2' },
+    winter: { leaf: '#CFD8DC', ground: '#ECEFF1', sky: '#B0BEC5', ambient: '#e0f7fa' },
 };
 
-export const ForestScene: React.FC<ForestSceneProps> = ({ season = 'summer', gesture, intensity }) => {
+export const ForestScene: React.FC<ForestSceneProps> = ({ season, handData }) => {
   const textures = useProceduralTextures();
   const colors = seasonColors[season];
 
-  // Map intensity to visual effects
-  const windStrength = gesture === 'fist' ? intensity * 2.0 : 0;
-  const birdsActive = gesture === 'open';
-
   return (
-    <Canvas shadows dpr={[1, 2]}>
+    <div id="canvas-container" className="w-full h-full">
+    <Canvas shadows dpr={[1, 1.5]} camera={{ position: [0, 8, 20], fov: 60 }}>
       {/* Lights */}
       <ambientLight intensity={0.4} color={colors.ambient} />
       <hemisphereLight color={colors.sky} groundColor={colors.ground} intensity={0.6} />
-      <directionalLight position={[30, 50, 20]} intensity={1.5} castShadow shadow-mapSize={[2048, 2048]} shadow-bias={-0.0005}>
+      <directionalLight position={[30, 50, 20]} intensity={1.5} castShadow shadow-mapSize={[1024, 1024]}>
         <orthographicCamera attach="shadow-camera" args={[-40, 40, 40, -40]} />
       </directionalLight>
-      <Sky sunPosition={[100, 20, 100]} turbidity={season === 'winter' ? 10 : 2} rayleigh={season === 'winter' ? 0.5 : 2} />
-      <fog attach="fog" args={[colors.ambient, 10, season === 'winter' ? 50 : 70]} />
+      <Sky sunPosition={season === 'winter' ? [10, 5, 100] : [100, 40, 100]} turbidity={season === 'winter' ? 10 : 2} />
+      <fog attach="fog" args={[colors.ambient, 10, season === 'winter' ? 40 : 80]} />
       <BakeShadows />
 
-      {/* Controls */}
-      <FirstPersonController />
-      <PointerLockControls />
+      {/* Controllers */}
+      <HybridController handData={handData} />
 
-      {/* World */}
+      {/* Seasonal Effects */}
+      {season === 'spring' && <SpringFlowers />}
+      {season === 'summer' && <SummerBirds />}
+      {season === 'autumn' && <AutumnLeaves />}
+      {season === 'winter' && <WinterSnow />}
+
+      {/* World Content */}
       <group>
         <Terrain texture={textures.ground} color={colors.ground} />
-        <Amphitheater texture={textures.wood} />
         
-        {Array.from({ length: 120 }).map((_, i) => {
+        {/* Amphitheater Seating (Benches) */}
+        {Array.from({ length: 5 }).map((_, i) => {
+            const angle = (i / 4) * Math.PI - Math.PI / 2; // Semi-circle
+            const x = Math.cos(angle) * 10;
+            const z = Math.sin(angle) * 10;
+            return <WoodenBench key={`bench-${i}`} position={[x, 0, z]} rotation={[0, -angle, 0]} texture={textures.wood} />
+        })}
+        {Array.from({ length: 7 }).map((_, i) => {
+            const angle = (i / 6) * Math.PI - Math.PI / 2;
+            const x = Math.cos(angle) * 15;
+            const z = Math.sin(angle) * 15;
+            return <WoodenBench key={`bench-outer-${i}`} position={[x, 0.5, z]} rotation={[0, -angle, 0]} texture={textures.wood} />
+        })}
+
+        {/* Trees (Increased Density) */}
+        {Array.from({ length: 150 }).map((_, i) => {
              const angle = Math.random() * Math.PI * 2;
-             const dist = 14 + Math.pow(Math.random(), 2) * 35; 
+             // Keep center clear (radius > 20)
+             const dist = 22 + Math.pow(Math.random(), 2) * 60; // Spread further out
              const x = Math.cos(angle) * dist;
              const z = Math.sin(angle) * dist;
-             const scale = 0.8 + Math.random() * 0.6;
+             const scale = 0.8 + Math.random() * 0.8; // More scale variance
              return (
                  <ProceduralTree 
                     key={i} 
@@ -298,12 +403,11 @@ export const ForestScene: React.FC<ForestSceneProps> = ({ season = 'summer', ges
                     scale={scale}
                     textures={textures}
                     leafColor={colors.leaf}
-                    windIntensity={windStrength}
-                    isBirdActive={birdsActive}
                  />
              );
         })}
       </group>
     </Canvas>
+    </div>
   );
 };
